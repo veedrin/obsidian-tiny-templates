@@ -1,6 +1,6 @@
 {
     "name": "obsidian-tiny-templates",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Quickly add files to your vault via templates",
     "main": "main.js",
     "scripts": {
@@ -9,7 +9,7 @@
         "version": "node version-bump.mjs && git add manifest.json versions.json"
     },
     "keywords": [],
-    "author": "",
+    "author": "veedrin",
     "license": "MIT",
     "devDependencies": {
         "@types/node": "^16.11.6",
