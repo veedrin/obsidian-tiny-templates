@@ -7,6 +7,7 @@ interface TinyTemplatesSettings {
         targetFolder?: string;
         dateFields?: Record<string, boolean>;
         isCommandRegistered?: boolean;
+        titleFormat?: string;
     }>;
 }
 
@@ -29,7 +30,7 @@ export default class TinyTemplates extends Plugin {
 
         this.addCommand({
             id: 'open',
-            name: 'Open Tiny Templates',
+            name: 'Open',
             callback: () => new TinyTemplatesModal(this.app, this).open(),
         });
 
@@ -67,6 +68,7 @@ class TinyTemplatesModal extends Modal {
     currentCategoryIndex: number;
     currentTemplateIndex: number;
     categorizedTemplates: Record<string, string[]>;
+    sortedCategories: string[] = [];
 
     constructor(app: App, plugin: TinyTemplates) {
         super(app);
@@ -160,8 +162,8 @@ class TinyTemplatesModal extends Modal {
             });
         }
 
-        // 设置初始选择
-        const categories = Object.keys(this.categorizedTemplates).sort((a, b) => {
+        // 保存排序后的分类列表
+        this.sortedCategories = Object.keys(this.categorizedTemplates).sort((a, b) => {
             if (a === '') return -1;
             if (b === '') return 1;
             return a.localeCompare(b, 'zh-CN');
@@ -172,8 +174,8 @@ class TinyTemplatesModal extends Modal {
         this.currentTemplateIndex = 0;
         this.selectedTemplate = null;
 
-        if (categories.length > 0) {
-            const firstCategory = categories[0];
+        if (this.sortedCategories.length > 0) {
+            const firstCategory = this.sortedCategories[0];
             if (this.categorizedTemplates[firstCategory]?.length > 0) {
                 this.selectedTemplate = this.categorizedTemplates[firstCategory][0];
                 this.currentCategoryIndex = 0;
@@ -232,15 +234,8 @@ class TinyTemplatesModal extends Modal {
         const { contentEl } = this;
         const templateListContainer = contentEl.createDiv({ cls: 'template-list' });
 
-        // 获取已排序的分类
-        const categories = Object.keys(this.categorizedTemplates).sort((a, b) => {
-            if (a === '') return -1;
-            if (b === '') return 1;
-            return a.localeCompare(b, 'zh-CN');
-        });
-
-        // 遍历排序后的分类
-        categories.forEach((category, categoryIndex) => {
+        // 使用已保存的排序分类列表
+        this.sortedCategories.forEach((category, categoryIndex) => {
             const templatePaths = this.categorizedTemplates[category];
             if (category === '') {
                 const templateCards = templateListContainer.createDiv({ cls: 'template-cards' });
@@ -308,41 +303,42 @@ class TinyTemplatesModal extends Modal {
     }
 
     navigateCategory(direction: number) {
-        const categories = Object.keys(this.categorizedTemplates);
-        if (categories.length === 0) return;
+        if (this.sortedCategories.length === 0) return;
 
-        // 切换到上/下一个类别的第一个模板
-        const newCategoryIndex = (this.currentCategoryIndex + direction + categories.length) % categories.length;
-        const newTemplates = this.categorizedTemplates[categories[newCategoryIndex]] || [];
+        // 获取当前模板在当前分类中的索引
+        const currentIndex = this.currentTemplateIndex;
+        
+        // 切换到上/下一个类别
+        const newCategoryIndex = (this.currentCategoryIndex + direction + this.sortedCategories.length) % this.sortedCategories.length;
+        const newTemplates = this.categorizedTemplates[this.sortedCategories[newCategoryIndex]] || [];
         
         if (newTemplates.length > 0) {
-            // 如果是向上导航，选择最后一个模板
-            const templateIndex = direction < 0 ? newTemplates.length - 1 : 0;
+            // 尝试在新分类中选择相同位置的模板，如果不存在则选择第一个
+            const templateIndex = Math.min(currentIndex, newTemplates.length - 1);
             this.selectTemplate(newCategoryIndex, templateIndex, newTemplates[templateIndex]);
         }
     }
 
     navigateWithinCategory(direction: number) {
-        const categories = Object.keys(this.categorizedTemplates);
-        if (categories.length === 0) return;
+        if (this.sortedCategories.length === 0) return;
 
-        const currentCategoryTemplates = this.categorizedTemplates[categories[this.currentCategoryIndex]] || [];
+        const currentCategoryTemplates = this.categorizedTemplates[this.sortedCategories[this.currentCategoryIndex]] || [];
         let newTemplateIndex = this.currentTemplateIndex + direction;
         let newCategoryIndex = this.currentCategoryIndex;
 
         // 如果超出当前类别范围，切换到上/下一个类别
         if (newTemplateIndex < 0) {
             // 向左到头，切换到上一个类别的最后一个模板
-            newCategoryIndex = (newCategoryIndex - 1 + categories.length) % categories.length;
-            const prevTemplates = this.categorizedTemplates[categories[newCategoryIndex]] || [];
+            newCategoryIndex = (newCategoryIndex - 1 + this.sortedCategories.length) % this.sortedCategories.length;
+            const prevTemplates = this.categorizedTemplates[this.sortedCategories[newCategoryIndex]] || [];
             newTemplateIndex = prevTemplates.length - 1;
         } else if (newTemplateIndex >= currentCategoryTemplates.length) {
             // 向右到头，切换到下一个类别的第一个模板
-            newCategoryIndex = (newCategoryIndex + 1) % categories.length;
+            newCategoryIndex = (newCategoryIndex + 1) % this.sortedCategories.length;
             newTemplateIndex = 0;
         }
 
-        const newTemplates = this.categorizedTemplates[categories[newCategoryIndex]] || [];
+        const newTemplates = this.categorizedTemplates[this.sortedCategories[newCategoryIndex]] || [];
         if (newTemplates.length > 0) {
             this.selectTemplate(newCategoryIndex, newTemplateIndex, newTemplates[newTemplateIndex]);
         }
@@ -379,8 +375,19 @@ class TinyTemplatesModal extends Modal {
             // 读取模板内容
             const content = await this.app.vault.read(templateFile);
             
-            // 创建新文件
-            const fileName = `未命名.md`;
+            // 创建新文件，如果有预设标题格式则使用
+            let fileName = `未命名.md`;
+            
+            // 处理预设标题格式
+            if (templateSettings.titleFormat) {
+                // 使用TitleFormatModal中的formatTitle方法生成标题
+                const titleFormat = new TitleFormatModal(this.app, this.plugin, templatePath, templateFile.basename);
+                const formattedTitle = titleFormat.formatTitle(templateSettings.titleFormat);
+                if (formattedTitle) {
+                    fileName = `${formattedTitle}.md`;
+                }
+            }
+            
             const filePath = `${targetFolder}/${fileName}`;
             const newFile = await this.app.vault.create(filePath, content);
             
@@ -388,7 +395,9 @@ class TinyTemplatesModal extends Modal {
             const dateFields = templateSettings.dateFields || {};
             if (Object.keys(dateFields).length > 0) {
                 await this.app.fileManager.processFrontMatter(newFile, (frontmatter) => {
-                    const today = new Date().toISOString().slice(0, 10);
+                    // 使用本地时区的日期，而不是UTC
+                    const now = new Date();
+                    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
                     for (const [fieldName, shouldAutoSet] of Object.entries(dateFields)) {
                         if (shouldAutoSet) {
                             frontmatter[fieldName] = today;
@@ -401,7 +410,6 @@ class TinyTemplatesModal extends Modal {
             const leaf = this.app.workspace.getLeaf('tab');
             await leaf.openFile(newFile);
 
-            new Notice(`已新建文件：${filePath}`);
             this.close();
         } catch (error) {
             new Notice(`新建文件失败：${error.message}`);
@@ -668,9 +676,12 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
             const templateSetting = new Setting(container)
                 .setName(template.basename)
                 .addExtraButton(button => {
+                    const targetFolder = this.plugin.settings.templates[template.path]?.targetFolder;
+                    const tooltipText = targetFolder ? `目标目录：${targetFolder}` : '选择目标目录';
+                    
                     button
                         .setIcon('target')
-                        .setTooltip(this.plugin.settings.templates[template.path]?.targetFolder || '选择目标目录')
+                        .setTooltip(tooltipText)
                         .onClick(async () => {
                             const folders: string[] = [];
                             this.app.vault.getAllLoadedFiles().forEach(file => {
@@ -695,7 +706,30 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
                     const iconEl = button.extraSettingsEl;
                     if (iconEl) {
                         iconEl.addClass('action-icon');
-                        if (this.plugin.settings.templates[template.path]?.targetFolder) {
+                        if (targetFolder) {
+                            iconEl.addClass('action-active');
+                        }
+                    }
+                    
+                    return button;
+                })
+                .addExtraButton(button => {
+                    button
+                        .setIcon('heading')
+                        .setTooltip('设置预设标题格式')
+                        .onClick(() => {
+                            new TitleFormatModal(
+                                this.app,
+                                this.plugin,
+                                template.path,
+                                template.basename
+                            ).open();
+                        });
+
+                    const iconEl = button.extraSettingsEl;
+                    if (iconEl) {
+                        iconEl.addClass('action-icon');
+                        if (this.plugin.settings.templates[template.path]?.titleFormat) {
                             iconEl.addClass('action-active');
                         }
                     }
@@ -730,7 +764,6 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
                                 
                                 // 更新图标状态
                                 button.extraSettingsEl?.removeClass('action-active');
-                                new Notice(`已将模板 ${template.basename} 从命令列表中移除`);
                             } else {
                                 // 注册新命令
                                 if (!this.plugin.settings.templates[template.path]) {
@@ -752,7 +785,6 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
                                 
                                 // 更新图标状态
                                 button.extraSettingsEl?.addClass('action-active');
-                                new Notice(`已将模板 ${template.basename} 添加到命令列表\n现在可以为该模板配置快捷键了`);
                             }
                         });
 
@@ -881,6 +913,157 @@ class DateFieldsModal extends Modal {
                 this.plugin.settingTab.display();
             }
         });
+    }
+
+    onClose() {
+        const { contentEl } = this;
+        contentEl.empty();
+    }
+}
+
+class TitleFormatModal extends Modal {
+    plugin: TinyTemplates;
+    templatePath: string;
+    templateName: string;
+    titleFormat: string;
+    previewEl: HTMLElement;
+
+    constructor(app: App, plugin: TinyTemplates, templatePath: string, templateName: string) {
+        super(app);
+        this.plugin = plugin;
+        this.templatePath = templatePath;
+        this.templateName = templateName;
+        this.titleFormat = this.plugin.settings.templates[templatePath]?.titleFormat || '';
+    }
+
+    async onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+
+        contentEl.createEl('h3', { text: '设置预设标题格式' });
+
+        // 输入框
+        const inputContainer = contentEl.createDiv({ cls: 'title-format-input-container' });
+        const inputEl = inputContainer.createEl('input', {
+            type: 'text',
+            value: this.titleFormat,
+            cls: 'title-format-input'
+        });
+
+        // 预览区域
+        const previewContainer = contentEl.createDiv({ cls: 'title-format-preview-container' });
+        previewContainer.createEl('div', { text: '预览', cls: 'title-format-preview-label' });
+        this.previewEl = previewContainer.createEl('div', { cls: 'title-format-preview-content' });
+        
+        // 更新预览
+        const updatePreview = () => {
+            const format = inputEl.value;
+            const preview = this.formatTitle(format);
+            this.previewEl.setText(preview);
+            this.titleFormat = format;
+        };
+        
+        // 输入事件
+        inputEl.addEventListener('input', updatePreview);
+        
+        // 变量选项
+        const variablesContainer = contentEl.createDiv({ cls: 'title-format-variables-container' });
+        variablesContainer.createEl('div', { text: '变量选项', cls: 'title-format-variables-label' });
+        
+        const variables = [
+            { key: '{{date}}', desc: '当前日期（YYYY-MM-DD格式）' },
+            { key: '{{year}}', desc: '年份（YYYY格式）' },
+            { key: '{{quarter}}', desc: '季度（1-4）' },
+            { key: '{{month}}', desc: '月份（MM格式）' },
+            { key: '{{week}}', desc: '周数（1-52）' },
+            { key: '{{weekday}}', desc: '星期（一、二、三、四、五、六、日）' },
+            { key: '{{day}}', desc: '日（DD格式）' }
+        ];
+        
+        for (const variable of variables) {
+            const varCard = variablesContainer.createDiv({ cls: 'title-format-variable-card' });
+            const keyEl = varCard.createSpan({ text: variable.key, cls: 'title-format-variable-key' });
+            const descEl = varCard.createSpan({ text: variable.desc, cls: 'title-format-variable-desc' });
+            
+            // 点击变量插入到输入框
+            varCard.addEventListener('click', () => {
+                const cursorPos = inputEl.selectionStart || 0;
+                const textBefore = inputEl.value.substring(0, cursorPos);
+                const textAfter = inputEl.value.substring(cursorPos);
+                inputEl.value = textBefore + variable.key + textAfter;
+                
+                // 设置光标位置
+                const newCursorPos = cursorPos + variable.key.length;
+                inputEl.setSelectionRange(newCursorPos, newCursorPos);
+                inputEl.focus();
+                
+                // 更新预览
+                updatePreview();
+            });
+        }
+        
+        // 保存按钮
+        const buttonContainer = contentEl.createDiv({ cls: 'title-format-button-container' });
+        const saveButton = buttonContainer.createEl('button', { text: '保存', cls: 'mod-cta' });
+        
+        saveButton.addEventListener('click', async () => {
+            if (!this.plugin.settings.templates[this.templatePath]) {
+                this.plugin.settings.templates[this.templatePath] = {
+                    name: this.templateName
+                };
+            }
+            
+            this.plugin.settings.templates[this.templatePath].titleFormat = this.titleFormat;
+            await this.plugin.saveSettings();
+            
+            // 如果是从设置页面打开的，刷新设置页面以更新按钮状态
+            if (this.plugin.settingTab) {
+                this.plugin.settingTab.display();
+            }
+            
+            this.close();
+        });
+        
+        // 初始化预览
+        updatePreview();
+    }
+    
+    /**
+     * 根据格式和当前日期生成标题
+     */
+    formatTitle(format: string): string {
+        if (!format) return ''; 
+        
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = String(now.getMonth() + 1).padStart(2, '0');
+        const day = String(now.getDate()).padStart(2, '0');
+        const date = `${year}-${month}-${day}`;
+        
+        // 计算季度
+        const quarter = Math.floor((now.getMonth() + 3) / 3);
+        
+        // 计算周数（一年中的第几周）
+        const firstDayOfYear = new Date(year, 0, 1);
+        const pastDaysOfYear = (now.getTime() - firstDayOfYear.getTime()) / 86400000;
+        const weekNum = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
+        const week = String(weekNum).padStart(2, '0'); // 格式化为两位数
+        
+        // 星期（中文数字表示）
+        const chineseWeekdays = ['日', '一', '二', '三', '四', '五', '六'];
+        const weekday = chineseWeekdays[now.getDay()];
+        
+        // 替换变量
+        let result = format;
+        result = result.replace(/\{\{date\}\}/g, date);
+        result = result.replace(/\{\{year\}\}/g, String(year));
+        result = result.replace(/\{\{quarter\}\}/g, String(quarter));
+        result = result.replace(/\{\{month\}\}/g, month);
+        result = result.replace(/\{\{week\}\}/g, week);
+        result = result.replace(/\{\{weekday\}\}/g, weekday);
+        result = result.replace(/\{\{day\}\}/g, day);
+        
+        return result;
     }
 
     onClose() {
