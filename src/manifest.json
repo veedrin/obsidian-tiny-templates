@@ -1,0 +1,10 @@
+{
+  "id": "tiny-templates",
+  "name": "Tiny Templates",
+  "version": "1.2.0",
+  "minAppVersion": "0.15.0",
+  "description": "Quickly add files to your vault via templates",
+  "author": "veedrin",
+  "authorUrl": "https://github.com/veedrin",
+  "isDesktopOnly": false
+}
