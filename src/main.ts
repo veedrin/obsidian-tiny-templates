@@ -1,11 +1,14 @@
 import { App, Plugin, Setting, TFile, TFolder, Modal, Notice, PluginSettingTab, SuggestModal, setIcon } from 'obsidian';
 
+// 设置为当天的日期字段类型
+type DateFieldType = 'date' | 'datetime' | false;
+
 interface TinyTemplatesSettings {
   templateFolder: string;
   templates: Record<string, {
     name: string;
     targetFolder?: string;
-    dateFields?: Record<string, boolean>;
+    dateFields?: Record<string, DateFieldType>;
     titleFormat?: string;
   }>;
 }
@@ -88,15 +91,15 @@ export default class TinyTemplates extends Plugin {
     for (const file of allTemplateFiles) {
       const path = file.path;
       const existingSettings = templates[path];
-      
+
       newTemplates[path] = existingSettings || { name: file.basename };
       newTemplates[path].name = file.basename;
 
       if (newTemplates[path].dateFields) {
         const fileCache = this.app.metadataCache.getFileCache(file);
         const frontmatterKeys = fileCache?.frontmatter ? Object.keys(fileCache.frontmatter) : [];
-        
-        const newDateFields: Record<string, boolean> = {};
+
+        const newDateFields: Record<string, DateFieldType> = {};
         for (const field in newTemplates[path].dateFields) {
           if (frontmatterKeys.includes(field)) {
             newDateFields[field] = newTemplates[path].dateFields![field];
@@ -133,11 +136,12 @@ class TinyTemplatesModal extends Modal {
   }
 
   async onOpen() {
-    const { contentEl } = this;
+    const { containerEl, contentEl } = this;
+    containerEl.addClass('tiny-templates-modal');
     contentEl.empty();
-    
-    contentEl.createEl('h4', { text: '选择模板新建文件' });
-    
+
+    contentEl.createEl('h4', { text: '通过模板新建文件' });
+
     await this.loadTemplates();
     this.renderTemplateList();
 
@@ -175,7 +179,7 @@ class TinyTemplatesModal extends Modal {
   async loadTemplates() {
     this.templates.clear();
     this.categorizedTemplates = {};
-    
+
     const templateFolder = this.plugin.settings.templateFolder;
     if (!templateFolder) {
       return;
@@ -188,7 +192,7 @@ class TinyTemplatesModal extends Modal {
     }
 
     await this.scanFolder(folder, '', templateFolder);
-    
+
     // 整理分类
     for (const [templatePath, templateInfo] of this.templates.entries()) {
       const category = templateInfo.category;
@@ -238,14 +242,14 @@ class TinyTemplatesModal extends Modal {
 
   async scanFolder(folder: TFolder, category: string, basePath: string) {
     const isTemplateRoot = folder.path === this.plugin.settings.templateFolder;
-    
+
     for (const child of folder.children) {
       if (child instanceof TFolder) {
         await this.scanFolder(child, child.name, basePath);
       } else if (child instanceof TFile) {
         const relativePath = child.path.substring(basePath.length + (basePath.endsWith('/') ? 0 : 1));
         const templateCategory = isTemplateRoot ? '' : category;
-        
+
         if (!this.plugin.settings.templates[child.path]) {
           this.plugin.settings.templates[child.path] = {
             name: child.basename
@@ -253,7 +257,7 @@ class TinyTemplatesModal extends Modal {
         } else {
           this.plugin.settings.templates[child.path].name = child.basename;
         }
-        
+
         this.templates.set(child.path, {
           path: child.path,
           category: templateCategory
@@ -271,7 +275,7 @@ class TinyTemplatesModal extends Modal {
     const fileCache = this.app.metadataCache.getFileCache(templateFile);
     if (!fileCache?.frontmatter) return {};
 
-    const dateFields: Record<string, boolean> = {};
+    const dateFields: Record<string, DateFieldType> = {};
 
     // 使用 Obsidian API 获取所有属性
     for (const [fieldName, value] of Object.entries(fileCache.frontmatter)) {
@@ -297,7 +301,7 @@ class TinyTemplatesModal extends Modal {
       } else {
         const categoryEl = templateListContainer.createDiv({ cls: 'template-category' });
         categoryEl.createEl('h4', { text: category });
-        
+
         const templateCards = categoryEl.createDiv({ cls: 'template-cards' });
         templatePaths.forEach((templatePath, templateIndex) => {
           this.renderTemplateCard(templateCards, templatePath, categoryIndex, templateIndex);
@@ -312,7 +316,7 @@ class TinyTemplatesModal extends Modal {
     const file = this.app.vault.getAbstractFileByPath(templatePath);
     if (!(file instanceof TFile)) return;
 
-    const templateCard = container.createDiv({ 
+    const templateCard = container.createDiv({
       cls: `template-card ${this.selectedTemplate === templatePath ? 'selected' : ''}`,
       attr: {
         'data-template-path': templatePath,
@@ -320,19 +324,19 @@ class TinyTemplatesModal extends Modal {
         'data-template-index': templateIndex.toString()
       }
     });
-    
+
     templateCard.createSpan({ text: file.basename });
-    
+
     templateCard.addEventListener('mouseenter', () => {
       const cards = this.contentEl.querySelectorAll('.template-card');
       cards.forEach(card => card.removeClass('hover'));
       templateCard.addClass('hover');
     });
-    
+
     templateCard.addEventListener('mouseleave', () => {
       templateCard.removeClass('hover');
     });
-    
+
     templateCard.addEventListener('click', () => {
       this.selectTemplate(categoryIndex, templateIndex, templatePath);
       this.createFileFromTemplate(templatePath);
@@ -361,11 +365,11 @@ class TinyTemplatesModal extends Modal {
 
     // 获取当前模板在当前分类中的索引
     const currentIndex = this.currentTemplateIndex;
-    
+
     // 切换到上/下一个类别
     const newCategoryIndex = (this.currentCategoryIndex + direction + this.sortedCategories.length) % this.sortedCategories.length;
     const newTemplates = this.categorizedTemplates[this.sortedCategories[newCategoryIndex]] || [];
-    
+
     if (newTemplates.length > 0) {
       // 尝试在新分类中选择相同位置的模板，如果不存在则选择第一个
       const templateIndex = Math.min(currentIndex, newTemplates.length - 1);
@@ -428,10 +432,10 @@ class TinyTemplatesModal extends Modal {
     try {
       // 读取模板内容
       const content = await this.app.vault.read(templateFile);
-      
+
       // 创建新文件，如果有预设标题格式则使用
       let fileName = `未命名.md`;
-      
+
       // 处理预设标题格式
       if (templateSettings.titleFormat) {
         // 使用TitleFormatModal中的formatTitle方法生成标题
@@ -441,10 +445,10 @@ class TinyTemplatesModal extends Modal {
           fileName = `${formattedTitle}.md`;
         }
       }
-      
+
       const filePath = `${targetFolder}/${fileName}`;
       const newFile = await this.app.vault.create(filePath, content);
-      
+
       // 处理日期字段
       const dateFields = templateSettings.dateFields || {};
       if (Object.keys(dateFields).length > 0) {
@@ -452,14 +456,17 @@ class TinyTemplatesModal extends Modal {
           // 使用本地时区的日期，而不是UTC
           const now = new Date();
           const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-          for (const [fieldName, shouldAutoSet] of Object.entries(dateFields)) {
-            if (shouldAutoSet) {
+          for (const [fieldName, configValue] of Object.entries(dateFields)) {
+            if (configValue === 'datetime') {
+              const nowStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:00`;
+              frontmatter[fieldName] = nowStr;
+            } else if (configValue === 'date') {
               frontmatter[fieldName] = today;
             }
           }
         });
       }
-      
+
       // 在新标签页打开新创建的文件
       const leaf = this.app.workspace.getLeaf('tab');
       await leaf.openFile(newFile);
@@ -552,22 +559,22 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
   plugin: TinyTemplates;
   templateFolders: Map<string, string[]> = new Map();
   templates: Map<string, { path: string, category: string }> = new Map();
-  
+
   constructor(app: App, plugin: TinyTemplates) {
     super(app, plugin);
     this.plugin = plugin;
   }
-  
+
   async display(): Promise<void> {
     const { containerEl } = this;
     containerEl.empty();
-    
+
     // 同步配置
     await this.plugin.syncSettingsWithFileSystem();
     await this.plugin.saveSettings();
-    
+
     containerEl.createEl('h2', { text: 'Tiny Templates Settings' });
-    
+
     // 创建模板目录选择区域
     const templateChoosingContainer = containerEl.createDiv({ cls: 'template-choosing-container' });
     const chooseFolderSetting = new Setting(templateChoosingContainer)
@@ -594,42 +601,42 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
     chooseFolderSetting.settingEl.addClass('template-folder-setting');
     chooseFolderSetting.infoEl.style.order = '2';  // 让描述显示在右边
     chooseFolderSetting.controlEl.style.order = '1';  // 让按钮显示在左边
-    
+
     if (this.plugin.settings.templateFolder) {
       await this.scanTemplates();
       this.displayTemplateSettings();
     }
   }
-  
+
   async scanTemplates() {
     const templateFolder = this.plugin.settings.templateFolder;
     if (!templateFolder) return;
-    
+
     const folder = this.app.vault.getAbstractFileByPath(templateFolder);
     if (!folder || !(folder instanceof TFolder)) {
       new Notice(`模板目录"${templateFolder}"不存在！`);
       return;
     }
-    
+
     this.templateFolders = new Map();
     this.templates = new Map();
     const allFolderPaths: string[] = [];
-    
+
     // 获取库中所有文件夹
     this.app.vault.getAllLoadedFiles().forEach(file => {
       if (file instanceof TFolder) {
         allFolderPaths.push(file.path);
       }
     });
-    
+
     // 扫描模板文件夹及其子文件夹
     await this.scanFolder(folder, '', allFolderPaths);
   }
-  
+
   async scanFolder(folder: TFolder, category: string, allFolderPaths: string[]) {
     // 判断是否是模板根目录
     const isTemplateRoot = folder.path === this.plugin.settings.templateFolder;
-    
+
     for (const child of folder.children) {
       if (child instanceof TFolder) {
         // 如果是文件夹，则作为新的分类继续扫描
@@ -638,10 +645,10 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
       } else if (child instanceof TFile) {
         // 如果是文件，则添加为模板
         this.templateFolders.set(child.path, allFolderPaths);
-        
+
         // 如果是在模板根目录下，则不设置分类
         const templateCategory = isTemplateRoot ? '' : category;
-        
+
         // 确保模板设置存在
         if (!this.plugin.settings.templates[child.path]) {
           this.plugin.settings.templates[child.path] = {
@@ -651,18 +658,18 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
           // 更新名称，保留其他设置
           this.plugin.settings.templates[child.path].name = child.basename;
         }
-        
+
         this.templates.set(child.basename, {
           path: child.path,
           category: templateCategory
         });
-        
+
         // 添加到 templateFolders
         this.templateFolders.set(child.path, allFolderPaths);
       }
     }
   }
-  
+
   async checkTemplateDateFields(templatePath: string) {
     const templateFile = this.app.vault.getAbstractFileByPath(templatePath);
     if (!(templateFile instanceof TFile)) {
@@ -672,7 +679,7 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
     const fileCache = this.app.metadataCache.getFileCache(templateFile);
     if (!fileCache?.frontmatter) return {};
 
-    const dateFields: Record<string, boolean> = {};
+    const dateFields: Record<string, DateFieldType> = {};
 
     // 使用 Obsidian API 获取所有属性
     for (const [fieldName, value] of Object.entries(fileCache.frontmatter)) {
@@ -682,23 +689,23 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
 
     return dateFields;
   }
-  
+
   displayTemplateSettings() {
     const { containerEl } = this;
-    
+
     // 创建标题和容器
     containerEl.createEl('h4', { cls: 'template-settings-title', text: '所有模板' });
     const allTemplatesContainer = containerEl.createDiv({ cls: 'template-settings-container' });
-    
+
     // 按分类组织模板
     const categorizedTemplates: Record<string, { path: string, basename: string }[]> = {};
     const uncategorizedTemplates: { path: string, basename: string }[] = [];
-    
+
     // 遍历所有模板
     for (const [basename, templateInfo] of this.templates) {
       const templatePath = templateInfo.path;
       const category = templateInfo.category;
-      
+
       if (!category) {
         uncategorizedTemplates.push({
           path: templatePath,
@@ -728,7 +735,7 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
       const templateGroup = allTemplatesContainer.createDiv({ cls: 'template-settings-group' });
       this.renderTemplateGroup(templateGroup, uncategorizedTemplates);
     }
-    
+
     // 按分类名称排序并显示分类的模板
     const sortedCategories = Object.entries(categorizedTemplates).sort(([a], [b]) => a.localeCompare(b, 'zh-CN'));
     for (const [category, templates] of sortedCategories) {
@@ -740,26 +747,26 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
 
   private renderTemplateGroup(container: HTMLElement, templates: { path: string, basename: string }[]) {
     const templateCardsContainer = container.createDiv({ cls: 'template-setting-cards-container' });
-    
+
     for (const template of templates) {
       // 创建模板卡片容器
       const templateCard = templateCardsContainer.createDiv({ cls: 'template-setting-card' });
-      
+
       // 创建模板名称
       const nameEl = templateCard.createDiv({ cls: 'template-setting-card-name', text: template.basename });
-      
+
       // 创建按钮容器
       const buttonContainer = templateCard.createDiv({ cls: 'template-setting-card-buttons' });
-      
+
       // 目标目录按钮
       const targetButton = buttonContainer.createDiv({ cls: 'template-setting-card-button' });
       const targetFolder = this.plugin.settings.templates[template.path]?.targetFolder;
       const tooltipText = targetFolder ? `目标目录：${targetFolder}` : '选择目标目录';
-      
+
       const targetIcon = targetButton.createEl('span', { cls: 'clickable-icon action-icon' + (targetFolder ? ' action-active' : '') });
       setIcon(targetIcon, 'target');
       targetIcon.setAttribute('aria-label', tooltipText);
-      
+
       targetIcon.addEventListener('click', async () => {
         const folders: string[] = [];
         this.app.vault.getAllLoadedFiles().forEach(file => {
@@ -779,15 +786,15 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
           this.display();
         }).open();
       });
-      
+
       // 预设标题按钮
       const titleButton = buttonContainer.createDiv({ cls: 'template-setting-card-button' });
       const hasTitleFormat = !!this.plugin.settings.templates[template.path]?.titleFormat;
-      
+
       const titleIcon = titleButton.createEl('span', { cls: 'clickable-icon action-icon' + (hasTitleFormat ? ' action-active' : '') });
       setIcon(titleIcon, 'heading');
       titleIcon.setAttribute('aria-label', '预设标题格式');
-      
+
       titleIcon.addEventListener('click', () => {
         new TitleFormatModal(
           this.app,
@@ -796,15 +803,15 @@ class TinyTemplatesSettingTab extends PluginSettingTab {
           template.basename
         ).open();
       });
-      
+
       // 日期字段按钮
       const dateButton = buttonContainer.createDiv({ cls: 'template-setting-card-button' });
       const hasDateFields = Object.keys(this.plugin.settings.templates[template.path]?.dateFields || {}).length > 0;
-      
+
       const dateIcon = dateButton.createEl('span', { cls: 'clickable-icon action-icon' + (hasDateFields ? ' action-active' : '') });
       setIcon(dateIcon, 'calendar');
       dateIcon.setAttribute('aria-label', '填充日期属性为当天');
-      
+
       dateIcon.addEventListener('click', () => {
         new DateFieldsModal(
           this.app,
@@ -853,7 +860,7 @@ class TitleFormatModal extends Modal {
     const previewContainer = contentEl.createDiv({ cls: 'title-format-preview-container' });
     previewContainer.createEl('div', { text: '预览：', cls: 'title-format-preview-label' });
     this.previewEl = previewContainer.createEl('div', { cls: 'title-format-preview-content' });
-    
+
     // 更新预览
     const updatePreview = () => {
       const format = inputEl.value;
@@ -861,14 +868,14 @@ class TitleFormatModal extends Modal {
       this.previewEl.setText(preview);
       this.titleFormat = format;
     };
-    
+
     // 输入事件
     inputEl.addEventListener('input', updatePreview);
-    
+
     // 变量选项
     const variablesContainer = contentEl.createDiv({ cls: 'title-format-variables-container' });
     variablesContainer.createEl('div', { text: '变量选项（点击即可插入）', cls: 'title-format-variables-label' });
-    
+
     const variables = [
       { key: '{{date}}', desc: '当前日期（YYYY-MM-DD格式）' },
       { key: '{{year}}', desc: '年份（YYYY格式）' },
@@ -878,80 +885,80 @@ class TitleFormatModal extends Modal {
       { key: '{{weekday}}', desc: '星期（一、二、三、四、五、六、日）' },
       { key: '{{day}}', desc: '日（DD格式）' }
     ];
-    
+
     for (const variable of variables) {
       const varCard = variablesContainer.createDiv({ cls: 'title-format-variable-card' });
       varCard.createSpan({ text: variable.key, cls: 'title-format-variable-key' });
       varCard.createSpan({ text: variable.desc, cls: 'title-format-variable-desc' });
-      
+
       // 点击变量插入到输入框
       varCard.addEventListener('click', () => {
         const cursorPos = inputEl.selectionStart || 0;
         const textBefore = inputEl.value.substring(0, cursorPos);
         const textAfter = inputEl.value.substring(cursorPos);
         inputEl.value = textBefore + variable.key + textAfter;
-        
+
         // 设置光标位置
         const newCursorPos = cursorPos + variable.key.length;
         inputEl.setSelectionRange(newCursorPos, newCursorPos);
         inputEl.focus();
-        
+
         // 更新预览
         updatePreview();
       });
     }
-    
+
     // 保存按钮
     const buttonContainer = contentEl.createDiv({ cls: 'title-format-button-container' });
     const saveButton = buttonContainer.createEl('button', { text: '保存', cls: 'mod-cta' });
-    
+
     saveButton.addEventListener('click', async () => {
       if (!this.plugin.settings.templates[this.templatePath]) {
         this.plugin.settings.templates[this.templatePath] = {
           name: this.templateName
         };
       }
-      
+
       this.plugin.settings.templates[this.templatePath].titleFormat = this.titleFormat;
       await this.plugin.saveSettings();
-      
+
       // 如果是从设置页面打开的，刷新设置页面以更新按钮状态
       if (this.plugin.settingTab) {
         this.plugin.settingTab.display();
       }
-      
+
       this.close();
     });
-    
+
     // 初始化预览
     updatePreview();
   }
-  
+
   /**
    * 根据格式和当前日期生成标题
    */
   formatTitle(format: string): string {
-    if (!format) return ''; 
-    
+    if (!format) return '';
+
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const date = `${year}-${month}-${day}`;
-    
+
     // 计算季度
     const quarter = Math.floor((now.getMonth() + 3) / 3);
-    
+
     // 计算周数（一年中的第几周）
     const firstDayOfYear = new Date(year, 0, 1);
     const pastDaysOfYear = (now.getTime() - firstDayOfYear.getTime()) / 86400000;
     const weekNum = Math.ceil((pastDaysOfYear + firstDayOfYear.getDay() + 1) / 7);
     const week = String(weekNum).padStart(2, '0'); // 格式化为两位数
-    
+
     // 星期（中文数字表示）
     const chineseWeekdays = ['日', '一', '二', '三', '四', '五', '六'];
     const weekday = chineseWeekdays[now.getDay()];
-    
+
     // 替换变量
     let result = format;
     result = result.replace(/\{\{date\}\}/g, date);
@@ -961,7 +968,7 @@ class TitleFormatModal extends Modal {
     result = result.replace(/\{\{week\}\}/g, week);
     result = result.replace(/\{\{weekday\}\}/g, weekday);
     result = result.replace(/\{\{day\}\}/g, day);
-    
+
     return result;
   }
 
@@ -979,7 +986,7 @@ class DateFieldsModal extends Modal {
   templatePath: string;
   templateName: string;
   fields: string[] = [];
-  dateFields: Record<string, boolean> = {};
+  dateFields: Record<string, DateFieldType> = {};
 
   constructor(app: App, plugin: TinyTemplates, templatePath: string, templateName: string) {
     super(app);
@@ -994,8 +1001,8 @@ class DateFieldsModal extends Modal {
 
     // 标题
     contentEl.createEl('h4', { text: '新建文件时将日期属性自动填充为当天' });
-    contentEl.createEl('p', { 
-      text: '插件无法判断哪些为日期属性，请用户自行选择',
+    contentEl.createEl('p', {
+      text: '开启"日期"将填充 YYYY-MM-DD，同时开启"时间"将填充 YYYY-MM-DDTHH:mm:00',
       cls: 'setting-item-description'
     });
 
@@ -1007,26 +1014,82 @@ class DateFieldsModal extends Modal {
     if (!fileCache?.frontmatter) return;
 
     const fieldsContainer = contentEl.createDiv({ cls: 'fields-container' });
-    
+
     // 获取所有属性并排序
     const sortedFields = Object.entries(fileCache.frontmatter)
       .filter(([fieldName]) => !EXCLUDED_FIELDS.includes(fieldName))
       .sort(([a], [b]) => a.localeCompare(b, 'zh-CN'));
-    
+
     // 使用排序后的属性创建设置项
     for (const [fieldName] of sortedFields) {
       this.fields.push(fieldName);
-      
-      // 创建属性设置项
-      const fieldSetting = new Setting(fieldsContainer)
-        .setName(fieldName)
-        .addToggle(toggle => toggle
-          .setValue(this.plugin.settings.templates[this.templatePath]?.dateFields?.[fieldName] || false)
-          .onChange(async (value) => {
-            this.dateFields[fieldName] = value;
-          }));
-      
-      fieldSetting.settingEl.addClass('field-setting');
+
+      // 初始化本地状态
+      const savedValue = this.plugin.settings.templates[this.templatePath]?.dateFields?.[fieldName];
+      this.dateFields[fieldName] = savedValue || false;
+
+      // 创建属性设置项容器
+      const fieldSettingDiv = fieldsContainer.createDiv({ cls: 'field-setting' });
+
+      // 属性名
+      fieldSettingDiv.createDiv({ cls: 'setting-item-name', text: fieldName });
+
+      // 控件容器
+      const controlsDiv = fieldSettingDiv.createDiv({ cls: 'date-field-controls' });
+
+      // 日期开关
+      const dateWrapper = controlsDiv.createDiv({ cls: 'date-field-switch-wrapper' });
+      dateWrapper.createSpan({ text: '日期', cls: 'switch-label' });
+      const dateToggle = new Setting(dateWrapper)
+        .addToggle(toggle => {
+          const isDateOn = this.dateFields[fieldName] === 'date' || this.dateFields[fieldName] === 'datetime';
+          toggle.setValue(isDateOn)
+            .onChange(async (value) => {
+              if (value) {
+                // 开启日期，默认设为 'date'
+                this.dateFields[fieldName] = 'date';
+                timeToggle.setDisabled(false);
+              } else {
+                // 关闭日期 -> false，同时关闭时间
+                this.dateFields[fieldName] = false;
+                timeToggle.setValue(false);
+                timeToggle.setDisabled(true);
+              }
+            });
+          // 缩小 switch
+          toggle.toggleEl.addClass('date-field-switch-small');
+        });
+      // 移除 Setting 默认的 padding/border
+      dateToggle.settingEl.addClass('date-field-setting-item');
+
+      // 时间开关
+      const timeWrapper = controlsDiv.createDiv({ cls: 'date-field-switch-wrapper' });
+      timeWrapper.createSpan({ text: '时间', cls: 'switch-label' });
+
+      // 初始状态
+      const isDatetime = this.dateFields[fieldName] === 'datetime';
+      const isDateOn = this.dateFields[fieldName] !== false;
+
+      let timeToggleComponent: any;
+      const timeToggleSetting = new Setting(timeWrapper)
+        .addToggle(toggle => {
+          timeToggleComponent = toggle;
+          toggle.setValue(isDatetime)
+            .setDisabled(!isDateOn)
+            .onChange(async (value) => {
+              if (value) {
+                // 开启时间 -> datetime
+                this.dateFields[fieldName] = 'datetime';
+              } else {
+                // 关闭时间，但日期仍然是开启的
+                this.dateFields[fieldName] = 'date';
+              }
+            });
+          toggle.toggleEl.addClass('date-field-switch-small');
+        });
+      timeToggleSetting.settingEl.addClass('date-field-setting-item');
+
+      const timeToggle = timeToggleComponent;
     }
 
     // 如果没有检测到任何字段，显示提示
@@ -1051,19 +1114,19 @@ class DateFieldsModal extends Modal {
       const currentFields = this.plugin.settings.templates[this.templatePath]?.dateFields || {};
       const updatedFields = { ...currentFields, ...this.dateFields };
 
-      // 清理掉所有值为 false 的字段，只保留 true 的
-      const finalFields: Record<string, boolean> = {};
+      // 清理掉所有值为 false 的字段，只保留 'date' 或 'datetime'
+      const finalFields: Record<string, DateFieldType> = {};
       for (const [key, value] of Object.entries(updatedFields)) {
-        if (value) {
-          finalFields[key] = true;
+        if (value !== false) {
+          finalFields[key] = value;
         }
       }
 
       this.plugin.settings.templates[this.templatePath].dateFields = finalFields;
-      
+
       await this.plugin.saveSettings();
       this.close();
-      
+
       // 刷新设置页面
       if (this.plugin.settingTab) {
         this.plugin.settingTab.display();

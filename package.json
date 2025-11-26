@@ -1,6 +1,6 @@
 {
   "name": "obsidian-tiny-templates",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Quickly add files to your vault via templates",
   "main": "main.js",
   "scripts": {
